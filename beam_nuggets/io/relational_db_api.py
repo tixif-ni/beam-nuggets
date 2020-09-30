@@ -5,14 +5,17 @@ import datetime
 
 from beam_nuggets.compat import iteritems
 from sqlalchemy import (
-    create_engine, MetaData, Table, Column,
+    create_engine,
+    MetaData,
+    Table,
+    Column,
     Integer,
     String,
     Float,
     Boolean,
     DateTime,
     Date,
-    insert as generic_insert
+    insert as generic_insert,
 )
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
@@ -109,7 +112,7 @@ class SourceConfiguration(object):
             password=password,
             host=host,
             port=port,
-            database=database
+            database=database,
         )
         self.create_if_missing = create_if_missing
 
@@ -223,7 +226,7 @@ class TableConfiguration(object):
         define_table_f=None,
         create_if_missing=False,
         primary_key_columns=None,
-        create_insert_f=None
+        create_insert_f=None,
     ):
         self.name = name
         self.define_table_f = define_table_f
@@ -285,39 +288,36 @@ class SqlAlchemyDB(object):
         table.write_record(
             session=self._session,
             create_insert_f=self._get_create_insert_f(table_config),
-            record_dict=record_dict
+            record_dict=record_dict,
         )
 
     def _get_create_insert_f(self, table_config):
         create_insert_f = table_config.create_insert_f
         if not create_insert_f:
-            if 'postgresql' in self._source.url.drivername:
+            if "postgresql" in self._source.url.drivername:
                 create_insert_f = create_upsert_postgres
-            elif 'mysql' in self._source.url.drivername:
+            elif "mysql" in self._source.url.drivername:
                 create_insert_f = create_upsert_mysql
             else:
                 create_insert_f = create_insert
         return create_insert_f
 
     def _open_table_for_read(self, name):
-        return self._open_table(
-            name=name,
-            get_table_f=load_table
-        )
+        return self._open_table(name=name, get_table_f=load_table)
 
     def _open_table_for_write(self, table_config, record):
         return self._open_table(
             name=table_config.name,
             get_table_f=create_table,
             table_config=table_config,
-            record=record
+            record=record,
         )
 
     def _open_table(self, name, get_table_f, **get_table_f_params):
         table = self._name_to_table.get(name, None)
         if not table:
-            self._name_to_table[name] = (
-                self._get_table(name, get_table_f, **get_table_f_params)
+            self._name_to_table[name] = self._get_table(
+                name, get_table_f, **get_table_f_params
             )
             table = self._name_to_table[name]
         return table
@@ -327,7 +327,7 @@ class SqlAlchemyDB(object):
         if table_class:
             table = _Table(table_class=table_class, name=name)
         else:
-            raise SqlAlchemyDbException('Failed to get table {}'.format(name))
+            raise SqlAlchemyDbException("Failed to get table {}".format(name))
         return table
 
 
@@ -354,8 +354,7 @@ class _Table(object):
     def write_record(self, session, create_insert_f, record_dict):
         try:
             insert_stmt = create_insert_f(
-                table=self._sqlalchemy_table,
-                record=record_dict
+                table=self._sqlalchemy_table, record=record_dict
             )
             session.execute(insert_stmt)
             session.commit()
@@ -376,12 +375,22 @@ class _Table(object):
 
 
 def load_table(session, name):
-    table_class = None
     engine = session.bind
-    if engine.dialect.has_table(engine, name):
+    name_parts = name.split(".")
+
+    if len(name_parts) == 1:
+        name = name_parts[0]
+        schema = None
+    else:
+        schema = name_parts[0]
+        name = name_parts[1]
+
+    if engine.dialect.has_table(engine, name, schema=schema):
         metadata = MetaData(bind=engine)
-        table_class = create_table_class(Table(name, metadata, autoload=True))
-    return table_class
+
+        return create_table_class(
+            Table(name, metadata, autoload=True, schema=schema)
+        )
 
 
 def create_table(session, name, table_config, record):
@@ -389,14 +398,11 @@ def create_table(session, name, table_config, record):
     table_class = load_table(session, name)
 
     if not table_class and table_config.create_table_if_missing:
-        define_table_f = (
-            table_config.define_table_f or
-            _get_default_define_f(
-                record=record,
-                name=name,
-                primary_key_column_names=table_config.primary_key_column_names,
-                drivername=session.bind.url.drivername,
-            )
+        define_table_f = table_config.define_table_f or _get_default_define_f(
+            record=record,
+            name=name,
+            primary_key_column_names=table_config.primary_key_column_names,
+            drivername=session.bind.url.drivername,
         )
         metadata = MetaData(bind=session.bind)
         sqlalchemy_table = define_table_f(metadata)
@@ -438,7 +444,7 @@ def _get_default_define_f(record, name, primary_key_column_names, drivername):
         columns = _columns_from_sample_record(
             record=record,
             primary_key_column_names=primary_key_column_names,
-            drivername=drivername
+            drivername=drivername,
         )
         return Table(name, metadata, *columns)
 
@@ -459,9 +465,9 @@ def _columns_from_sample_record(record, primary_key_column_names, drivername):
             if col not in primary_key_column_names
         ]
     else:
-        pri_col_name = 'id'
+        pri_col_name = "id"
         while pri_col_name in record.keys():
-            pri_col_name += '_'
+            pri_col_name += "_"
         primary_key_columns = [Column(pri_col_name, Integer, primary_key=True)]
         other_columns = [
             Column(col, infer_db_type(value, drivername))
@@ -514,8 +520,7 @@ def create_upsert_postgres(table, record):
     """
     insert_stmt = postgres_insert(table).values(record)
     return insert_stmt.on_conflict_do_update(
-        index_elements=[col for col in table.primary_key],
-        set_=record
+        index_elements=[col for col in table.primary_key], set_=record
     )
 
 
@@ -581,8 +586,9 @@ def infer_db_type(val, drivername):
         if is_type_f(val):
             return db_type
     return (
-        String if _does_support_varchar(drivername) else
-        String(VARCHAR_DEFAULT_COL_SIZE)
+        String
+        if _does_support_varchar(drivername)
+        else String(VARCHAR_DEFAULT_COL_SIZE)
         # It seems only PostgreSQL and SQLite support String columns with
         # not specified length.
     )
@@ -592,7 +598,7 @@ VARCHAR_DEFAULT_COL_SIZE = 50
 
 
 def _does_support_varchar(drivername):
-    return 'postgresql' in drivername or 'sqlite' in drivername
+    return "postgresql" in drivername or "sqlite" in drivername
 
 
 def _is_number(x):
@@ -600,7 +606,7 @@ def _is_number(x):
         _ = x + 1
     except:
         return False
-    return not hasattr(x, '__len__')
+    return not hasattr(x, "__len__")
 
 
 PYTHON_TO_DB_TYPE = [
@@ -610,4 +616,3 @@ PYTHON_TO_DB_TYPE = [
     (lambda x: isinstance(x, datetime.datetime), DateTime),
     (lambda x: isinstance(x, datetime.date), Date),
 ]
-
